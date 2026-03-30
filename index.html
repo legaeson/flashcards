@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="FlashCards">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='107' fill='%23007AFF'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-size='280' fill='white'%3E📚%3C/text%3E%3C/svg%3E">
+    <title>FlashCards - Изучай легко</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Главный экран -->
+        <div id="home-screen" class="screen active">
+            <div class="header">
+                <h1>FlashCards</h1>
+                <button class="icon-btn" onclick="app.showScreen('settings-screen')">⚙</button>
+            </div>
+            
+            <div class="stats-card">
+                <div class="stat-item">
+                    <div class="stat-value" id="cards-due">0</div>
+                    <div class="stat-label">К изучению</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="total-cards">0</div>
+                    <div class="stat-label">Всего карточек</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="streak">0</div>
+                    <div class="stat-label">Дней подряд</div>
+                </div>
+            </div>
+
+            <div class="decks-container" id="decks-list"></div>
+
+            <button class="fab" onclick="app.showScreen('add-deck-screen')">+</button>
+        </div>
+
+        <!-- Экран изучения -->
+        <div id="study-screen" class="screen">
+            <div class="header">
+                <button class="icon-btn" onclick="app.showScreen('home-screen')">← Назад</button>
+                <h2 id="deck-name"></h2>
+            </div>
+
+            <div class="progress-bar">
+                <div class="progress-fill" id="study-progress"></div>
+            </div>
+
+            <div class="card-container">
+                <div class="flashcard" id="flashcard" onclick="app.flipCard()">
+                    <div class="card-front" id="card-front">
+                        <div class="card-content"></div>
+                    </div>
+                    <div class="card-back" id="card-back">
+                        <div class="card-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="button-group" id="answer-buttons" style="display: none;">
+                <button class="btn btn-error" onclick="app.answerCard(1)">
+                    Снова<br><small>1 мин</small>
+                </button>
+                <button class="btn btn-warning" onclick="app.answerCard(2)">
+                    Трудно<br><small>10 мин</small>
+                </button>
+                <button class="btn btn-success" onclick="app.answerCard(3)">
+                    Хорошо<br><small>1 день</small>
+                </button>
+                <button class="btn btn-primary" onclick="app.answerCard(4)">
+                    Легко<br><small>4 дня</small>
+                </button>
+            </div>
+
+            <div class="study-complete" id="study-complete" style="display: none;">
+                <div class="complete-icon">✓</div>
+                <h2>Отлично!</h2>
+                <p>Вы завершили изучение этой колоды на сегодня</p>
+                <button class="btn btn-primary" onclick="app.showScreen('home-screen')">На главную</button>
+            </div>
+        </div>
+
+        <!-- Экран карточек колоды -->
+        <div id="deck-cards-screen" class="screen">
+            <div class="header">
+                <button class="icon-btn" onclick="app.showScreen('home-screen')">← Назад</button>
+                <h2 id="deck-cards-name"></h2>
+                <button class="icon-btn" onclick="app.showAddCardScreen()">+</button>
+            </div>
+
+            <div class="search-bar">
+                <input type="text" placeholder="Поиск..." id="search-input" oninput="app.filterCards()">
+            </div>
+
+            <div class="cards-list" id="cards-list"></div>
+        </div>
+
+        <!-- Экран добавления колоды -->
+        <div id="add-deck-screen" class="screen">
+            <div class="header">
+                <button class="icon-btn" onclick="app.showScreen('home-screen')">✕</button>
+                <h2>Новая колода</h2>
+            </div>
+
+            <div class="form-container">
+                <input type="text" class="input" id="deck-name-input" placeholder="Название колоды">
+                <textarea class="input" id="deck-description-input" placeholder="Описание (необязательно)"></textarea>
+                <button class="btn btn-primary" onclick="app.addDeck()">Создать колоду</button>
+            </div>
+        </div>
+
+        <!-- Экран добавления карточки -->
+        <div id="add-card-screen" class="screen">
+            <div class="header">
+                <button class="icon-btn" onclick="app.showScreen('deck-cards-screen')">✕</button>
+                <h2>Новая карточка</h2>
+            </div>
+
+            <div class="form-container">
+                <textarea class="input" id="card-front-input" placeholder="Лицевая сторона"></textarea>
+                <textarea class="input" id="card-back-input" placeholder="Обратная сторона"></textarea>
+                <input type="text" class="input" id="card-tags-input" placeholder="Теги (через запятую)">
+                <button class="btn btn-primary" onclick="app.addCard()">Добавить карточку</button>
+            </div>
+        </div>
+
+        <!-- Экран статистики -->
+        <div id="stats-screen" class="screen">
+            <div class="header">
+                <button class="icon-btn" onclick="app.showScreen('home-screen')">← Назад</button>
+                <h2>Статистика</h2>
+            </div>
+
+            <div class="stats-container">
+                <div class="stat-card">
+                    <h3>Общая статистика</h3>
+                    <div class="stat-row">
+                        <span>Всего карточек:</span>
+                        <strong id="stat-total-cards">0</strong>
+                    </div>
+                    <div class="stat-row">
+                        <span>Изученных карточек:</span>
+                        <strong id="stat-learned-cards">0</strong>
+                    </div>
+                    <div class="stat-row">
+                        <span>Новых карточек:</span>
+                        <strong id="stat-new-cards">0</strong>
+                    </div>
+                    <div class="stat-row">
+                        <span>Повторений сегодня:</span>
+                        <strong id="stat-reviews-today">0</strong>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <h3>Серия дней</h3>
+                    <div class="streak-display">
+                        <div class="streak-number" id="stat-streak">0</div>
+                        <div>дней подряд 🔥</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Экран настроек -->
+        <div id="settings-screen" class="screen">
+            <div class="header">
+                <button class="icon-btn" onclick="app.showScreen('home-screen')">← Назад</button>
+                <h2>Настройки</h2>
+            </div>
+
+            <div class="settings-container">
+                <div class="settings-section">
+                    <h3>Данные</h3>
+                    <button class="btn btn-secondary" onclick="app.exportData()">Экспорт данных</button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">
+                        Импорт данных
+                    </button>
+                    <input type="file" id="import-file" accept=".json" style="display: none;" onchange="app.importData(event)">
+                </div>
+
+                <div class="settings-section">
+                    <h3>О приложении</h3>
+                    <p>FlashCards версия 1.0</p>
+                    <p>Минималистичное приложение для эффективного изучения</p>
+                    <p>Интервальное повторение по алгоритму SM-2</p>
+                </div>
+
+                <div class="settings-section">
+                    <button class="btn btn-error" onclick="app.confirmClearData()">Удалить все данные</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        // Register service worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./service-worker.js')
+                .then(reg => console.log('Service Worker registered'))
+                .catch(err => console.log('Service Worker registration failed'));
+        }
+    </script>
+</body>
+</html>
