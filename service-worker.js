@@ -1,23 +1,35 @@
-const CACHE_NAME = 'flashcards-v1';
+const CACHE_NAME = 'flashcards-v2';
 const urlsToCache = [
+  './',
   './index.html',
   './style.css',
-  './app.js'
+  './app.js',
+  './manifest.json'
 ];
 
 // Install service worker
 self.addEventListener('install', event => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => cache.addAll(urlsToCache))
   );
 });
 
-// Serve from cache
+// Serve from cache, fallback to network, offline fallback to index.html for navigations
 self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request)
-      .then(response => response || fetch(event.request))
+    caches.match(event.request, { ignoreSearch: true })
+      .then(cached => {
+        if (cached) return cached;
+        return fetch(event.request).catch(() => {
+          if (event.request.mode === 'navigate') {
+            return caches.match('./index.html');
+          }
+          throw new Error('offline');
+        });
+      })
   );
 });
 
@@ -32,6 +44,6 @@ self.addEventListener('activate', event => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
 });

@@ -25,31 +25,63 @@ class FlashCardsApp {
     loadData() {
         const saved = localStorage.getItem('flashcards-data');
         if (saved) {
-            this.data = JSON.parse(saved);
+            try {
+                const parsed = JSON.parse(saved);
+                if (parsed && Array.isArray(parsed.decks)) {
+                    this.data = parsed;
+                }
+            } catch (err) {
+                console.warn('Corrupted localStorage data, starting fresh:', err);
+            }
             // Migrate old data if needed
-            if (!this.data.stats) {
+            if (!this.data.stats || typeof this.data.stats !== 'object') {
                 this.data.stats = {
                     lastStudyDate: null,
                     streak: 0,
                     reviewsToday: 0
                 };
             }
+            if (!Array.isArray(this.data.decks)) {
+                this.data.decks = [];
+            }
         }
     }
 
     saveData() {
-        localStorage.setItem('flashcards-data', JSON.stringify(this.data));
+        try {
+            localStorage.setItem('flashcards-data', JSON.stringify(this.data));
+        } catch (err) {
+            console.warn('Could not save data (quota/private mode?):', err);
+        }
+    }
+
+    generateId() {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            return crypto.randomUUID();
+        }
+        return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
     }
 
     // === SPACED REPETITION ALGORITHM (SM-2) ===
+    // interval is stored in days. Grades 1-2 are short lapses (minutes),
+    // grades 3+ advance the SM-2 schedule.
     calculateNextReview(card, grade) {
         const now = Date.now();
-        
-        if (!card.efactor) card.efactor = 2.5;
-        if (!card.interval) card.interval = 0;
-        if (!card.repetitions) card.repetitions = 0;
 
-        if (grade >= 3) {
+        if (typeof card.efactor !== 'number') card.efactor = 2.5;
+        if (typeof card.interval !== 'number') card.interval = 0;
+        if (typeof card.repetitions !== 'number') card.repetitions = 0;
+
+        // Update efactor first (standard SM-2 order)
+        card.efactor = card.efactor + (0.1 - (5 - grade) * (0.08 + (5 - grade) * 0.02));
+        if (card.efactor < 1.3) card.efactor = 1.3;
+
+        let minutes;
+        if (grade < 3) {
+            card.repetitions = 0;
+            card.interval = 0;
+            minutes = grade === 1 ? 1 : 10;
+        } else {
             if (card.repetitions === 0) {
                 card.interval = 1;
             } else if (card.repetitions === 1) {
@@ -58,22 +90,9 @@ class FlashCardsApp {
                 card.interval = Math.round(card.interval * card.efactor);
             }
             card.repetitions++;
-        } else {
-            card.repetitions = 0;
-            card.interval = 1;
-        }
-
-        card.efactor = card.efactor + (0.1 - (5 - grade) * (0.08 + (5 - grade) * 0.02));
-        if (card.efactor < 1.3) card.efactor = 1.3;
-
-        // Set next review date based on grade
-        let minutes;
-        switch(grade) {
-            case 1: minutes = 1; break;
-            case 2: minutes = 10; break;
-            case 3: minutes = 1440; break; // 1 day
-            case 4: minutes = 5760; break; // 4 days
-            default: minutes = 1;
+            // Easy (4-5) schedules ~30% further out than Good (3)
+            const easyMultiplier = grade >= 4 ? 1.3 : 1;
+            minutes = Math.round(card.interval * 1440 * easyMultiplier);
         }
 
         card.nextReview = now + (minutes * 60 * 1000);
@@ -125,14 +144,26 @@ class FlashCardsApp {
 
     // === SCREEN MANAGEMENT ===
     showScreen(screenId) {
+        const target = document.getElementById(screenId);
+        if (!target) {
+            console.warn('Unknown screen:', screenId);
+            return;
+        }
         document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-        document.getElementById(screenId).classList.add('active');
+        target.classList.add('active');
 
         if (screenId === 'home-screen') {
             this.renderHome();
         } else if (screenId === 'stats-screen') {
             this.renderStats();
+        } else if (screenId === 'deck-cards-screen') {
+            this.renderCardsList(this.getCurrentFilter());
         }
+    }
+
+    getCurrentFilter() {
+        const input = document.getElementById('search-input');
+        return input ? input.value : '';
     }
 
     // === HOME SCREEN ===
@@ -146,26 +177,60 @@ class FlashCardsApp {
             this.data.decks.forEach(deck => {
                 const dueCards = deck.cards.filter(c => this.isDue(c)).length;
                 const totalCards = deck.cards.length;
-                
+
                 const deckEl = document.createElement('div');
                 deckEl.className = 'deck-card';
-                deckEl.innerHTML = `
-                    <h3>${this.escapeHtml(deck.name)}</h3>
-                    ${deck.description ? `<p>${this.escapeHtml(deck.description)}</p>` : ''}
-                    <div class="deck-stats">
-                        <span>К изучению <strong>${dueCards}</strong></span>
-                        <span>Всего <strong>${totalCards}</strong></span>
-                    </div>
-                    <div class="deck-actions">
-                        <button class="btn btn-primary" onclick="app.startStudy('${deck.id}')" ${dueCards === 0 ? 'disabled' : ''}>
-                            ${dueCards > 0 ? 'Изучать' : 'Завершено'}
-                        </button>
-                        <button class="btn btn-secondary" onclick="app.viewDeckCards('${deck.id}')">
-                            Карточки
-                        </button>
-                        <button class="delete-btn" onclick="app.deleteDeck('${deck.id}')">Удалить</button>
-                    </div>
-                `;
+
+                const title = document.createElement('h3');
+                title.textContent = deck.name;
+                deckEl.appendChild(title);
+
+                if (deck.description) {
+                    const desc = document.createElement('p');
+                    desc.textContent = deck.description;
+                    deckEl.appendChild(desc);
+                }
+
+                const stats = document.createElement('div');
+                stats.className = 'deck-stats';
+                const dueSpan = document.createElement('span');
+                dueSpan.textContent = 'К изучению ';
+                const dueStrong = document.createElement('strong');
+                dueStrong.textContent = dueCards;
+                dueSpan.appendChild(dueStrong);
+                const totalSpan = document.createElement('span');
+                totalSpan.textContent = 'Всего ';
+                const totalStrong = document.createElement('strong');
+                totalStrong.textContent = totalCards;
+                totalSpan.appendChild(totalStrong);
+                stats.appendChild(dueSpan);
+                stats.appendChild(totalSpan);
+                deckEl.appendChild(stats);
+
+                const actions = document.createElement('div');
+                actions.className = 'deck-actions';
+
+                const studyBtn = document.createElement('button');
+                studyBtn.className = 'btn btn-primary';
+                studyBtn.textContent = dueCards > 0 ? 'Изучать' : 'Завершено';
+                studyBtn.disabled = dueCards === 0;
+                studyBtn.addEventListener('click', () => this.startStudy(deck.id));
+
+                const cardsBtn = document.createElement('button');
+                cardsBtn.className = 'btn btn-secondary';
+                cardsBtn.textContent = 'Карточки';
+                cardsBtn.addEventListener('click', () => this.viewDeckCards(deck.id));
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'delete-btn';
+                delBtn.textContent = 'Удалить';
+                delBtn.addEventListener('click', () => this.deleteDeck(deck.id));
+
+                actions.appendChild(studyBtn);
+                actions.appendChild(cardsBtn);
+                actions.appendChild(delBtn);
+                deckEl.appendChild(actions);
+
                 decksList.appendChild(deckEl);
             });
         }
@@ -195,7 +260,7 @@ class FlashCardsApp {
         }
 
         const deck = {
-            id: Date.now().toString(),
+            id: this.generateId(),
             name: name,
             description: descInput.value.trim(),
             cards: [],
@@ -221,10 +286,17 @@ class FlashCardsApp {
 
     // === CARD MANAGEMENT ===
     viewDeckCards(deckId) {
-        this.currentDeckId = deckId;
         const deck = this.data.decks.find(d => d.id === deckId);
-        
+        if (!deck) {
+            console.warn('Deck not found:', deckId);
+            this.showScreen('home-screen');
+            return;
+        }
+        this.currentDeckId = deckId;
+
         document.getElementById('deck-cards-name').textContent = deck.name;
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) searchInput.value = '';
         this.renderCardsList();
         this.showScreen('deck-cards-screen');
     }
@@ -234,14 +306,22 @@ class FlashCardsApp {
         const cardsList = document.getElementById('cards-list');
         cardsList.innerHTML = '';
 
+        if (!deck || !Array.isArray(deck.cards)) {
+            cardsList.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--text-secondary);">Нет карточек</div>';
+            return;
+        }
+
+        const toText = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
+
         let cards = deck.cards;
         if (filter) {
             const lowerFilter = filter.toLowerCase();
-            cards = cards.filter(c => 
-                c.front.toLowerCase().includes(lowerFilter) ||
-                c.back.toLowerCase().includes(lowerFilter) ||
-                (c.tags && c.tags.some(t => t.toLowerCase().includes(lowerFilter)))
-            );
+            cards = cards.filter(c => {
+                const front = toText(c.front).toLowerCase();
+                const back = toText(c.back).toLowerCase();
+                const tagHit = Array.isArray(c.tags) && c.tags.some(t => toText(t).toLowerCase().includes(lowerFilter));
+                return front.includes(lowerFilter) || back.includes(lowerFilter) || tagHit;
+            });
         }
 
         if (cards.length === 0) {
@@ -252,18 +332,38 @@ class FlashCardsApp {
         cards.forEach(card => {
             const cardEl = document.createElement('div');
             cardEl.className = 'card-item';
-            cardEl.innerHTML = `
-                <div class="card-item-header">
-                    <button class="delete-btn" onclick="app.deleteCard('${card.id}')">Удалить</button>
-                </div>
-                <div class="card-item-front">${this.escapeHtml(card.front)}</div>
-                <div class="card-item-back">${this.escapeHtml(card.back)}</div>
-                ${card.tags && card.tags.length > 0 ? `
-                    <div class="card-item-tags">
-                        ${card.tags.map(tag => `<span class="tag">${this.escapeHtml(tag)}</span>`).join('')}
-                    </div>
-                ` : ''}
-            `;
+
+            const header = document.createElement('div');
+            header.className = 'card-item-header';
+            const delBtn = document.createElement('button');
+            delBtn.className = 'delete-btn';
+            delBtn.textContent = 'Удалить';
+            delBtn.addEventListener('click', () => this.deleteCard(card.id));
+            header.appendChild(delBtn);
+            cardEl.appendChild(header);
+
+            const frontEl = document.createElement('div');
+            frontEl.className = 'card-item-front';
+            frontEl.textContent = toText(card.front);
+            cardEl.appendChild(frontEl);
+
+            const backEl = document.createElement('div');
+            backEl.className = 'card-item-back';
+            backEl.textContent = toText(card.back);
+            cardEl.appendChild(backEl);
+
+            if (Array.isArray(card.tags) && card.tags.length > 0) {
+                const tagsEl = document.createElement('div');
+                tagsEl.className = 'card-item-tags';
+                card.tags.forEach(tag => {
+                    const tagEl = document.createElement('span');
+                    tagEl.className = 'tag';
+                    tagEl.textContent = toText(tag);
+                    tagsEl.appendChild(tagEl);
+                });
+                cardEl.appendChild(tagsEl);
+            }
+
             cardsList.appendChild(cardEl);
         });
     }
@@ -274,6 +374,11 @@ class FlashCardsApp {
     }
 
     showAddCardScreen() {
+        if (!this.data.decks.some(d => d.id === this.currentDeckId)) {
+            alert('Сначала выберите колоду');
+            this.showScreen('home-screen');
+            return;
+        }
         this.showScreen('add-card-screen');
     }
 
@@ -293,7 +398,7 @@ class FlashCardsApp {
         const tags = tagsInput.value.split(',').map(t => t.trim()).filter(t => t);
 
         const card = {
-            id: Date.now().toString(),
+            id: this.generateId(),
             front: front,
             back: back,
             tags: tags,
@@ -306,6 +411,12 @@ class FlashCardsApp {
         };
 
         const deck = this.data.decks.find(d => d.id === this.currentDeckId);
+        if (!deck) {
+            alert('Колода не найдена');
+            this.showScreen('home-screen');
+            return;
+        }
+        if (!Array.isArray(deck.cards)) deck.cards = [];
         deck.cards.push(card);
         this.saveData();
 
@@ -319,31 +430,41 @@ class FlashCardsApp {
     deleteCard(cardId) {
         if (confirm('Удалить эту карточку?')) {
             const deck = this.data.decks.find(d => d.id === this.currentDeckId);
+            if (!deck || !Array.isArray(deck.cards)) return;
             deck.cards = deck.cards.filter(c => c.id !== cardId);
             this.saveData();
-            this.renderCardsList();
+            this.renderCardsList(this.getCurrentFilter());
         }
     }
 
     // === STUDY MODE ===
     startStudy(deckId) {
-        this.currentDeckId = deckId;
         const deck = this.data.decks.find(d => d.id === deckId);
-        
+        if (!deck || !Array.isArray(deck.cards)) {
+            alert('Колода не найдена');
+            return;
+        }
+        this.currentDeckId = deckId;
+
         this.studyCards = deck.cards.filter(c => this.isDue(c));
-        
+
         if (this.studyCards.length === 0) {
             alert('Нет карточек для изучения');
             return;
         }
 
-        // Shuffle cards
-        this.studyCards.sort(() => Math.random() - 0.5);
-        
+        // Fisher-Yates shuffle (uniform)
+        for (let i = this.studyCards.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.studyCards[i], this.studyCards[j]] = [this.studyCards[j], this.studyCards[i]];
+        }
+
         this.currentCardIndex = 0;
         document.getElementById('deck-name').textContent = deck.name;
         document.getElementById('study-complete').style.display = 'none';
-        
+        const container = document.querySelector('.card-container');
+        if (container) container.style.display = 'flex';
+
         this.showScreen('study-screen');
         this.showCard();
     }
@@ -380,8 +501,11 @@ class FlashCardsApp {
 
     answerCard(grade) {
         const card = this.studyCards[this.currentCardIndex];
+        if (!card) return;
         const deck = this.data.decks.find(d => d.id === this.currentDeckId);
+        if (!deck || !Array.isArray(deck.cards)) return;
         const deckCard = deck.cards.find(c => c.id === card.id);
+        if (!deckCard) return;
 
         this.calculateNextReview(deckCard, grade);
         this.data.stats.reviewsToday++;
@@ -393,13 +517,15 @@ class FlashCardsApp {
     }
 
     updateProgress() {
-        const progress = (this.currentCardIndex / this.studyCards.length) * 100;
+        const total = this.studyCards.length || 1;
+        const progress = Math.min(100, (this.currentCardIndex / total) * 100);
         document.getElementById('study-progress').style.width = progress + '%';
     }
 
     completeStudy() {
         document.querySelector('.card-container').style.display = 'none';
         document.getElementById('answer-buttons').style.display = 'none';
+        document.getElementById('study-progress').style.width = '100%';
         document.getElementById('study-complete').style.display = 'block';
     }
 
@@ -425,8 +551,42 @@ class FlashCardsApp {
         const a = document.createElement('a');
         a.href = url;
         a.download = `flashcards-backup-${Date.now()}.json`;
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    sanitizeImported(imported) {
+        if (!imported || typeof imported !== 'object' || !Array.isArray(imported.decks)) {
+            throw new Error('bad format: missing "decks" array');
+        }
+        const toText = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
+        return {
+            decks: imported.decks.map(d => ({
+                id: typeof d.id === 'string' ? d.id : this.generateId(),
+                name: toText(d.name) || 'Без названия',
+                description: toText(d.description),
+                createdAt: typeof d.createdAt === 'number' ? d.createdAt : Date.now(),
+                cards: Array.isArray(d.cards) ? d.cards.map(c => ({
+                    id: typeof c.id === 'string' ? c.id : this.generateId(),
+                    front: toText(c.front),
+                    back: toText(c.back),
+                    tags: Array.isArray(c.tags) ? c.tags.map(toText) : [],
+                    createdAt: typeof c.createdAt === 'number' ? c.createdAt : Date.now(),
+                    nextReview: typeof c.nextReview === 'number' ? c.nextReview : Date.now(),
+                    lastReview: typeof c.lastReview === 'number' ? c.lastReview : null,
+                    interval: typeof c.interval === 'number' ? c.interval : 0,
+                    repetitions: typeof c.repetitions === 'number' ? c.repetitions : 0,
+                    efactor: typeof c.efactor === 'number' ? c.efactor : 2.5
+                })) : []
+            })),
+            stats: {
+                lastStudyDate: imported.stats && typeof imported.stats.lastStudyDate === 'number' ? imported.stats.lastStudyDate : null,
+                streak: imported.stats && typeof imported.stats.streak === 'number' ? imported.stats.streak : 0,
+                reviewsToday: imported.stats && typeof imported.stats.reviewsToday === 'number' ? imported.stats.reviewsToday : 0
+            }
+        };
     }
 
     importData(event) {
@@ -434,13 +594,18 @@ class FlashCardsApp {
         if (!file) return;
 
         const reader = new FileReader();
+        reader.onerror = () => alert('Не удалось прочитать файл');
         reader.onload = (e) => {
             try {
                 const imported = JSON.parse(e.target.result);
+                const clean = this.sanitizeImported(imported);
                 if (confirm('Это заменит все текущие данные. Продолжить?')) {
-                    this.data = imported;
+                    this.data = clean;
+                    this.currentDeckId = null;
+                    this.currentCardIndex = 0;
+                    this.studyCards = [];
                     this.saveData();
-                    this.renderHome();
+                    this.showScreen('home-screen');
                     alert('Данные успешно импортированы!');
                 }
             } catch (err) {
@@ -462,6 +627,12 @@ class FlashCardsApp {
                         reviewsToday: 0
                     }
                 };
+                this.currentDeckId = null;
+                this.currentCardIndex = 0;
+                this.studyCards = [];
+                this.isFlipped = false;
+                const searchInput = document.getElementById('search-input');
+                if (searchInput) searchInput.value = '';
                 this.saveData();
                 this.showScreen('home-screen');
             }
@@ -471,18 +642,20 @@ class FlashCardsApp {
     // === UTILITIES ===
     escapeHtml(text) {
         const div = document.createElement('div');
-        div.textContent = text;
+        div.textContent = typeof text === 'string' ? text : (text == null ? '' : String(text));
         return div.innerHTML;
     }
 }
 
-// Initialize app
-const app = new FlashCardsApp();
-
-// Re-show study screen properly when returning
-document.addEventListener('DOMContentLoaded', () => {
-    const studyScreen = document.getElementById('study-screen');
-    if (studyScreen.classList.contains('active')) {
-        document.querySelector('.card-container').style.display = 'flex';
-    }
-});
+// Initialize app after DOM is ready (script is at end of body,
+// but DOMContentLoaded covers async/deferred load cases too)
+let app;
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        app = new FlashCardsApp();
+        window.app = app;
+    });
+} else {
+    app = new FlashCardsApp();
+    window.app = app;
+}

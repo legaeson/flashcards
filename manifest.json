@@ -2,10 +2,12 @@
   "name": "FlashCards - Изучай легко",
   "short_name": "FlashCards",
   "description": "Приложение для изучения с интервальным повторением",
+  "id": "./index.html",
+  "scope": "./",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#F2F2F7",
-  "theme_color": "#007AFF",
+  "background_color": "#f8f9fa",
+  "theme_color": "#1a73e8",
   "orientation": "portrait",
   "icons": [
     {
