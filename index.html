@@ -112,6 +112,10 @@
                 <input type="text" class="input" id="deck-name-input" placeholder="Название колоды">
                 <textarea class="input" id="deck-description-input" placeholder="Описание (необязательно)"></textarea>
                 <button class="btn btn-primary" onclick="app.addDeck()">Создать колоду</button>
+                <div style="text-align:center; margin:16px 0 8px; color:var(--text-secondary); font-size:13px;">— или —</div>
+                <button class="btn btn-secondary" onclick="document.getElementById('deck-file').click()">Загрузить колоду из JSON</button>
+                <input type="file" id="deck-file" accept=".json,application/json" style="display: none;" onchange="app.importDecks(event)">
+                <button class="btn btn-secondary" style="margin-top:8px; border:none;" onclick="app.downloadExampleDeck()">Скачать пример JSON</button>
             </div>
         </div>
 
@@ -179,8 +183,12 @@
                 <div class="settings-section">
                     <h3>Данные</h3>
                     <button class="btn btn-secondary" onclick="app.exportData()">Экспорт данных</button>
-                    <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">
-                        Импорт данных
+                    <button class="btn btn-secondary" style="margin-top:8px;" onclick="document.getElementById('deck-import-file').click()">
+                        Добавить колоду из JSON
+                    </button>
+                    <input type="file" id="deck-import-file" accept=".json,application/json" style="display: none;" onchange="app.importDecks(event)">
+                    <button class="btn btn-secondary" style="margin-top:8px;" onclick="document.getElementById('import-file').click()">
+                        Импорт данных (замена)
                     </button>
                     <input type="file" id="import-file" accept=".json" style="display: none;" onchange="app.importData(event)">
                 </div>

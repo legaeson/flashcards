@@ -1,10 +1,11 @@
-const CACHE_NAME = 'flashcards-v2';
+const CACHE_NAME = 'flashcards-v3';
 const urlsToCache = [
   './',
   './index.html',
   './style.css',
   './app.js',
-  './manifest.json'
+  './manifest.json',
+  './example-deck.json'
 ];
 
 // Install service worker

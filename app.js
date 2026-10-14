@@ -616,6 +616,92 @@ class FlashCardsApp {
         event.target.value = '';
     }
 
+    // === DECK FILE UPLOAD (merge, does not replace) ===
+    // Accepts: full backup {decks:[...]}, single deck {name, cards},
+    // array of decks [{name, cards}], or bare card list [{front, back}].
+    sanitizeDeck(raw, fallbackName) {
+        const toText = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
+        if (!raw || typeof raw !== 'object') throw new Error('bad deck format');
+        const cards = Array.isArray(raw.cards) ? raw.cards : (Array.isArray(raw) ? raw : null);
+        if (!cards) throw new Error('bad deck format: missing "cards" array');
+        return {
+            id: this.generateId(),
+            name: toText(raw.name) || fallbackName || 'Импортированная колода',
+            description: toText(raw.description),
+            createdAt: Date.now(),
+            cards: cards.map(c => {
+                if (!c || typeof c !== 'object') throw new Error('bad card format');
+                const front = toText(c.front);
+                const back = toText(c.back);
+                if (!front || !back) throw new Error('у карточки пустые front/back');
+                return {
+                    id: this.generateId(),
+                    front,
+                    back,
+                    tags: Array.isArray(c.tags) ? c.tags.map(toText).filter(t => t) : [],
+                    createdAt: typeof c.createdAt === 'number' ? c.createdAt : Date.now(),
+                    nextReview: typeof c.nextReview === 'number' ? c.nextReview : Date.now(),
+                    lastReview: typeof c.lastReview === 'number' ? c.lastReview : null,
+                    interval: typeof c.interval === 'number' ? c.interval : 0,
+                    repetitions: typeof c.repetitions === 'number' ? c.repetitions : 0,
+                    efactor: typeof c.efactor === 'number' ? c.efactor : 2.5
+                };
+            })
+        };
+    }
+
+    importDecks(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const baseName = file.name.replace(/\.json$/i, '');
+
+        const reader = new FileReader();
+        reader.onerror = () => alert('Не удалось прочитать файл');
+        reader.onload = (e) => {
+            try {
+                const parsed = JSON.parse(e.target.result);
+                let raws = [];
+                if (parsed && Array.isArray(parsed.decks)) {
+                    raws = parsed.decks; // full backup
+                } else if (Array.isArray(parsed)) {
+                    // array of decks or bare card list?
+                    if (parsed.length > 0 && parsed[0] && typeof parsed[0] === 'object' && ('cards' in parsed[0] || 'name' in parsed[0])) {
+                        raws = parsed; // deck list
+                    } else {
+                        raws = [{ name: baseName, cards: parsed }]; // bare cards
+                    }
+                } else if (parsed && typeof parsed === 'object') {
+                    raws = [parsed]; // single deck
+                } else {
+                    throw new Error('bad format');
+                }
+                if (raws.length === 0) throw new Error('в файле нет колод/карточек');
+
+                const added = raws.map((r, i) => this.sanitizeDeck(r, raws.length > 1 ? `${baseName} ${i + 1}` : baseName));
+                const cardCount = added.reduce((s, d) => s + d.cards.length, 0);
+                if (cardCount === 0) throw new Error('в файле нет карточек (пустые front/back?)');
+
+                this.data.decks.push(...added);
+                this.saveData();
+                this.showScreen('home-screen');
+                alert(`Добавлено: колод ${added.length}, карточек ${cardCount}`);
+            } catch (err) {
+                alert('Ошибка загрузки колоды: ' + err.message);
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+    }
+
+    downloadExampleDeck() {
+        const a = document.createElement('a');
+        a.href = './example-deck.json';
+        a.download = 'example-deck.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+
     confirmClearData() {
         if (confirm('Удалить все данные? Это действие необратимо!')) {
             if (confirm('Вы уверены? Все колоды и карточки будут удалены!')) {
